@@ -1,0 +1,185 @@
+// Estrutura inicial do frontend React para o CAPTAFÁCIL
+import { useState, useEffect } from 'react';
+import jsPDF from 'jspdf';
+import { Document, Packer, Paragraph, TextRun } from 'docx';
+import { saveAs } from 'file-saver';
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+
+export default function Home() {
+  const [step, setStep] = useState(1);
+  const [diagnostico, setDiagnostico] = useState({ cnpj: '', utilidadePublica: '', atuaCom: '' });
+  const [resultado, setResultado] = useState('');
+  const [projeto, setProjeto] = useState({ nome: '', publico: '', local: '', duracao: '', justificativa: '', objetivos: '', atividades: '', resultados: '', orcamento: '' });
+  const [preview, setPreview] = useState('');
+  const [ufs, setUfs] = useState([]);
+  const [municipios, setMunicipios] = useState([]);
+  const [ufSelecionada, setUfSelecionada] = useState('');
+  const [municipioSelecionado, setMunicipioSelecionado] = useState('');
+  const [dadosMunicipio, setDadosMunicipio] = useState('');
+  const [usuario, setUsuario] = useState(null);
+  const [formLogin, setFormLogin] = useState({ email: '', senha: '' });
+  const [formCadastro, setFormCadastro] = useState({ nome: '', email: '', senha: '' });
+
+  useEffect(() => {
+    fetch('https://servicodados.ibge.gov.br/api/v1/localidades/estados')
+      .then(res => res.json())
+      .then(data => setUfs(data.sort((a, b) => a.sigla.localeCompare(b.sigla))));
+  }, []);
+
+  useEffect(() => {
+    if (ufSelecionada) {
+      fetch(`https://servicodados.ibge.gov.br/api/v1/localidades/estados/${ufSelecionada}/municipios`)
+        .then(res => res.json())
+        .then(data => setMunicipios(data));
+    }
+  }, [ufSelecionada]);
+
+  const buscarDadosMunicipio = async () => {
+    const municipio = municipios.find(m => m.nome === municipioSelecionado);
+    if (!municipio) return;
+
+    const codMunicipio = municipio.id;
+    const indicadores = [29171, 6579, 5938];
+
+    const resultados = await Promise.all(
+      indicadores.map(ind =>
+        fetch(`https://servicodados.ibge.gov.br/api/v1/pesquisas/${ind}/indicadores/todos/municipios/${codMunicipio}`)
+          .then(res => res.json())
+          .catch(() => null)
+      )
+    );
+
+    const info = resultados.map((r, i) => {
+      if (!r || !r[0] || !r[0].res) return null;
+      const ano = Object.keys(r[0].res)[0];
+      const valor = r[0].res[ano];
+      if (indicadores[i] === 29171) return `população estimada de ${valor.toLocaleString('pt-BR')} habitantes`;
+      if (indicadores[i] === 6579) return `rendimento médio domiciliar per capita de R$ ${valor.toFixed(2)}`;
+      if (indicadores[i] === 5938) return `taxa de alfabetização de ${valor}%`;
+      return null;
+    }).filter(Boolean);
+
+    const textoGerado = `Segundo o IBGE, o município de ${municipioSelecionado} possui ${info.join(", ")}, o que reforça a necessidade de políticas públicas que promovam inclusão, educação e desenvolvimento social.`;
+
+    setProjeto(prev => ({
+      ...prev,
+      justificativa: textoGerado
+    }));
+    setDadosMunicipio("Justificativa gerada automaticamente com base em dados do IBGE.");
+  };
+
+  const handleSalvarProjeto = () => {
+    const projetoParaSalvar = {
+      ...projeto,
+      usuario: usuario?.email || 'anonimo',
+      data: new Date().toISOString(),
+    };
+    console.log("Projeto salvo:", projetoParaSalvar);
+    alert("Projeto salvo no perfil da ONG (simulado).");
+  };
+
+  const handleLogin = () => {
+    setUsuario({ nome: 'ONG Simulada', email: formLogin.email });
+    alert('Login realizado com sucesso!');
+  };
+
+  const handleCadastro = () => {
+    setUsuario({ nome: formCadastro.nome, email: formCadastro.email });
+    alert('Cadastro realizado com sucesso!');
+  };
+
+  const handleGerarPreview = () => {
+    const texto = `Projeto: ${projeto.nome}
+Público-Alvo: ${projeto.publico}
+Local: ${projeto.local}
+Duração: ${projeto.duracao} meses
+
+Objetivo Geral:
+Promover ações de impacto social voltadas a ${projeto.publico.toLowerCase()} na região de ${projeto.local}, fortalecendo vínculos e oportunidades.
+
+Justificativa:
+${projeto.justificativa}
+
+Objetivos Específicos:
+${projeto.objetivos}
+
+Atividades e Metodologia:
+${projeto.atividades}
+
+Resultados Esperados:
+${projeto.resultados}
+
+Orçamento Resumido:
+${projeto.orcamento}`;
+    setPreview(texto);
+    setStep(5);
+  };
+
+  const exportarParaPDF = () => {
+    const doc = new jsPDF();
+    const linhas = preview.split('\n');
+    let y = 10;
+    doc.setFontSize(12);
+    linhas.forEach(linha => {
+      doc.text(linha, 10, y);
+      y += 7;
+      if (y > 280) {
+        doc.addPage();
+        y = 10;
+      }
+    });
+    doc.save(`${projeto.nome || 'projeto'}.pdf`);
+  };
+
+  const exportarParaDOCX = () => {
+    const doc = new Document({
+      sections: [
+        {
+          children: preview.split("\n").map(linha =>
+            new Paragraph({
+              children: [new TextRun(linha)],
+            })
+          ),
+        },
+      ],
+    });
+
+    Packer.toBlob(doc).then(blob => {
+      saveAs(blob, `${projeto.nome || 'projeto'}.docx`);
+    });
+  };
+
+  return (
+    <div className="p-4">
+      <h1 className="text-2xl font-bold mb-4">Diagnóstico CAPTAFÁCIL</h1>
+      {!usuario && (
+        <Card className="max-w-md mb-6">
+          <CardContent className="space-y-2">
+            <h2 className="text-lg font-semibold">Login</h2>
+            <input type="email" placeholder="E-mail" value={formLogin.email} onChange={e => setFormLogin({ ...formLogin, email: e.target.value })} className="w-full border p-2" />
+            <input type="password" placeholder="Senha" value={formLogin.senha} onChange={e => setFormLogin({ ...formLogin, senha: e.target.value })} className="w-full border p-2" />
+            <Button onClick={handleLogin}>Entrar</Button>
+            <hr className="my-4" />
+            <h2 className="text-lg font-semibold">Cadastro</h2>
+            <input type="text" placeholder="Nome da ONG" value={formCadastro.nome} onChange={e => setFormCadastro({ ...formCadastro, nome: e.target.value })} className="w-full border p-2" />
+            <input type="email" placeholder="E-mail" value={formCadastro.email} onChange={e => setFormCadastro({ ...formCadastro, email: e.target.value })} className="w-full border p-2" />
+            <input type="password" placeholder="Senha" value={formCadastro.senha} onChange={e => setFormCadastro({ ...formCadastro, senha: e.target.value })} className="w-full border p-2" />
+            <Button onClick={handleCadastro}>Cadastrar</Button>
+          </CardContent>
+        </Card>
+      )}
+      {step === 5 && (
+        <Card className="max-w-md mt-4">
+          <CardContent>
+            <h2 className="text-lg font-semibold">Prévia do Projeto</h2>
+            <pre className="whitespace-pre-wrap mt-2">{preview}</pre>
+            <Button className="mt-4" onClick={exportarParaPDF}>Exportar como PDF</Button>
+            <Button className="mt-2" onClick={exportarParaDOCX}>Exportar como DOCX</Button>
+            {usuario && <Button className="mt-2" onClick={handleSalvarProjeto}>Salvar no Perfil da ONG</Button>}
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
